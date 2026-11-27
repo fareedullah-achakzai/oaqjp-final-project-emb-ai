@@ -61,8 +61,9 @@ def show_exam_result(request, course_id, submission_id):
         (total_score / total_grade) * 100
         if total_grade > 0 else 0
     )
+    selected_ids = list(selected_choices.values_list('id', flat=True))
 
-    context = {
+    context = { 'selected_ids': selected_ids,
         'course': course,
         'submission': submission,
         'grade': total_score,
