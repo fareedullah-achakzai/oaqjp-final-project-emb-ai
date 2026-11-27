@@ -1,58 +1,78 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Course, Question, Choice, Submission
+from django.contrib.auth.decorators import login_required
+from django.urls import reverse
+from .models import Course, Enrollment, Question, Choice, Submission
 
-
+@login_required
 def submit(request, course_id):
-    course = get_object_or_404(Course, id=course_id)
+    course = get_object_or_404(Course, pk=course_id)
 
     if request.method == 'POST':
-        score = 0
-        total_grade = 0
-        last_submission = None
+        enrollment = get_object_or_404(
+            Enrollment,
+            user=request.user,
+            course=course
+        )
 
-        for question in Question.objects.filter(course=course):
-            total_grade += question.grade
-            selected_choice_id = request.POST.get(f'question_{question.id}')
+        submission = Submission.objects.create(enrollment=enrollment)
 
-            if selected_choice_id:
-                choice = get_object_or_404(
-                    Choice, id=selected_choice_id, question=question
-                )
-                last_submission = Submission.objects.create(
-                    question=question, choice=choice
-                )
+        selected_choices = []
 
-                if choice.is_correct:
-                    score += question.grade
+        for key in request.POST:
+            if key.startswith('choice'):
+                selected_choices.extend(request.POST.getlist(key))
 
-        if last_submission:
-            return redirect(
-                'show_exam_result',
-                course_id=course.id,
-                submission_id=last_submission.id
-            )
+        choices = Choice.objects.filter(id__in=selected_choices)
+        submission.choices.set(choices)
 
-    return render(request, 'exam.html', {'course': course})
+        return redirect(
+            'onlinecourse:show_exam_result',
+            course_id=course.id,
+            submission_id=submission.id
+        )
+
+    return redirect('onlinecourse:course_details', course_id=course.id)
 
 
+@login_required
 def show_exam_result(request, course_id, submission_id):
-    course = get_object_or_404(Course, id=course_id)
-    submission = get_object_or_404(Submission, id=submission_id)
+    course = get_object_or_404(Course, pk=course_id)
 
-    submissions = Submission.objects.filter(question__course=course)
-    score = 0
-    total_grade = 0
+    submission = get_object_or_404(
+        Submission,
+        pk=submission_id,
+        enrollment__user=request.user,
+        enrollment__course=course
+    )
 
-    for question in Question.objects.filter(course=course):
-        total_grade += question.grade
-        answer = submissions.filter(question=question).first()
+    questions = Question.objects.filter(course=course)
+    selected_choices = submission.choices.all()
 
-        if answer and answer.choice.is_correct:
-            score += question.grade
+    selected_ids = [choice.id for choice in selected_choices]
 
-    return render(request, 'exam_result.html', {
+    total_grade = sum(question.grade for question in questions)
+    total_score = 0
+
+    for question in questions:
+        if question.is_get_score(selected_ids):
+            total_score += question.grade
+
+    percentage_score = (
+        (total_score / total_grade) * 100
+        if total_grade > 0 else 0
+    )
+
+    context = {
         'course': course,
-        'score': score,
+        'submission': submission,
+        'grade': total_score,
         'total_grade': total_grade,
-        'submissions': submissions
-    })
+        'percentage_score': percentage_score,
+        'choices': selected_choices,
+    }
+
+    return render(
+        request,
+        'onlinecourse/exam_result_bootstrap.html',
+        context
+    )
